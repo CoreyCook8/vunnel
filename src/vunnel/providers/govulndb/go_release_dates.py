@@ -42,6 +42,11 @@ GO_GIT_URL = "https://go.googlesource.com/go"
 # module names in the go vuln db that map to Go toolchain release tags rather
 # than proxy module versions
 STDLIB_MODULES = {"stdlib", "toolchain"}
+USER_AGENT = "vunnel/1.0 (govulndb-provider; +https://github.com/anchore/vunnel)"
+
+
+class GoReleaseDateLookupError(RuntimeError):
+    """Raised when an authoritative Go release-date source cannot be queried."""
 
 
 class GoReleaseDateOverlay:
@@ -52,9 +57,18 @@ class GoReleaseDateOverlay:
     tuple never re-hit the network.
     """
 
-    def __init__(self, logger: logging.Logger | None = None):
+    def __init__(
+        self,
+        logger: logging.Logger | None = None,
+        timeout: int = http.DEFAULT_TIMEOUT,
+        retries: int = 3,
+        backoff_in_seconds: int = 3,
+    ):
         self._cache: dict[tuple[str, str], date | None] = {}
         self.logger = logger if logger is not None else logging.getLogger(self.__class__.__name__)
+        self.timeout = timeout
+        self.retries = retries
+        self.backoff_in_seconds = backoff_in_seconds
 
     def lookup(self, module: str, version: str) -> date | None:
         """Return the release date for a Go (module, version), or None on miss."""
@@ -96,8 +110,7 @@ class GoReleaseDateOverlay:
         try:
             return orjson.loads(resp.content)
         except orjson.JSONDecodeError:
-            self.logger.warning(f"failed to parse JSON from {url}")
-            return None
+            raise GoReleaseDateLookupError(f"failed to parse JSON from {url}") from None
 
     def _get_gitiles_json(self, url: str) -> dict[str, Any] | None:
         # gitiles prefixes JSON with a `)]}'` XSS-guard line that must be stripped
@@ -110,8 +123,7 @@ class GoReleaseDateOverlay:
         try:
             return orjson.loads(body)
         except orjson.JSONDecodeError:
-            self.logger.warning(f"failed to parse gitiles JSON from {url}")
-            return None
+            raise GoReleaseDateLookupError(f"failed to parse gitiles JSON from {url}") from None
 
     def _get(self, url: str) -> requests.Response | None:
         try:
@@ -120,11 +132,14 @@ class GoReleaseDateOverlay:
             return http.get(
                 url,
                 self.logger,
+                retries=self.retries,
+                backoff_in_seconds=self.backoff_in_seconds,
+                timeout=self.timeout,
                 status_handler=lambda r: None if r.status_code in (200, 404, 410) else r.raise_for_status(),
+                user_agent=USER_AGENT,
             )
         except Exception as e:
-            self.logger.warning(f"go release-date lookup failed for {url}: {e}")
-            return None
+            raise GoReleaseDateLookupError(f"go release-date lookup failed for {url}: {e}") from e
 
 
 def _stdlib_version_to_tag(version: str) -> str:

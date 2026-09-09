@@ -3,7 +3,10 @@ from __future__ import annotations
 import datetime
 from types import SimpleNamespace
 
+import pytest
+
 from vunnel.providers.govulndb.go_release_dates import (
+    GoReleaseDateLookupError,
     GoReleaseDateOverlay,
     _escape_module_path,
     _stdlib_version_to_tag,
@@ -40,6 +43,20 @@ def test_lookup_module_uses_module_proxy_and_caches(monkeypatch):
     assert calls == ["https://proxy.golang.org/golang.org/x/image/@v/v0.10.0.info"]
 
 
+def test_lookup_module_misses_on_not_found(monkeypatch):
+    overlay = GoReleaseDateOverlay()
+
+    def fake_get(url):
+        return SimpleNamespace(
+            status_code=404,
+            content=b"not found",
+        )
+
+    monkeypatch.setattr(overlay, "_get", fake_get)
+
+    assert overlay.lookup("golang.org/x/image", "0.10.0") is None
+
+
 def test_lookup_stdlib_uses_go_release_tag_and_caches(monkeypatch):
     overlay = GoReleaseDateOverlay()
     calls = []
@@ -56,6 +73,33 @@ def test_lookup_stdlib_uses_go_release_tag_and_caches(monkeypatch):
     assert overlay.lookup("stdlib", "1.21.5") == datetime.date(2023, 12, 5)
     assert overlay.lookup("stdlib", "1.21.5") == datetime.date(2023, 12, 5)
     assert calls == ["https://go.googlesource.com/go/+/refs/tags/go1.21.5?format=JSON"]
+
+
+def test_lookup_raises_when_release_source_fails(monkeypatch):
+    overlay = GoReleaseDateOverlay()
+
+    def fake_get(url):
+        raise GoReleaseDateLookupError(f"failed: {url}")
+
+    monkeypatch.setattr(overlay, "_get", fake_get)
+
+    with pytest.raises(GoReleaseDateLookupError):
+        overlay.lookup("golang.org/x/image", "0.10.0")
+
+
+def test_lookup_raises_when_release_source_returns_invalid_json(monkeypatch):
+    overlay = GoReleaseDateOverlay()
+
+    def fake_get(url):
+        return SimpleNamespace(
+            status_code=200,
+            content=b"not json",
+        )
+
+    monkeypatch.setattr(overlay, "_get", fake_get)
+
+    with pytest.raises(GoReleaseDateLookupError):
+        overlay.lookup("golang.org/x/image", "0.10.0")
 
 
 def test_go_extra_candidates_marks_release_date_accurate():

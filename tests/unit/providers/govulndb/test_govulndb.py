@@ -1,3 +1,4 @@
+import datetime
 import shutil
 from unittest.mock import patch
 
@@ -39,6 +40,36 @@ def test_parser(mock_download, mock_extract, helpers, auto_fake_fixdate_finder, 
     assert vuln_tuples[0][1] == "1.3.1"
     assert vuln_tuples[1][0] == "GO-2024-2611"
     assert vuln_tuples[1][1] == "1.3.1"
+
+
+@patch("vunnel.providers.govulndb.parser.Parser._extract")
+@patch("vunnel.providers.govulndb.parser.Parser._download")
+def test_parser_prefers_go_release_date(
+    mock_download,
+    mock_extract,
+    helpers,
+    auto_fake_fixdate_finder,
+    disable_get_requests,
+    monkeypatch,
+):
+    mock_download.return_value = None
+    mock_extract.return_value = None
+    workspace = helpers.provider_workspace_helper(name=Provider.name())
+    mock_data_path = helpers.local_dir("test-fixtures")
+    shutil.copytree(mock_data_path, workspace.input_dir, dirs_exist_ok=True)
+    parser = Parser(ws=workspace, logger=None)
+    monkeypatch.setattr(parser.release_dates, "lookup", lambda module, version: datetime.date(2023, 8, 1))
+
+    vuln_tuples = list(parser.get())
+    fixes = vuln_tuples[0][2]["affected"][0]["ranges"][0]["database_specific"]["anchore"]["fixes"]
+
+    assert fixes == [
+        {
+            "version": "0.10.0",
+            "date": "2023-08-01",
+            "kind": "go-release",
+        },
+    ]
 
 
 @pytest.mark.parametrize(

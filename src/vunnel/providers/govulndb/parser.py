@@ -49,7 +49,7 @@ class Parser:
         self.logger = logger
         self.zip_path = os.path.join(self.workspace.input_path, "vulndb.zip")
         self.extract_dir = os.path.join(self.workspace.input_path, "vulndb")
-        self.release_dates = GoReleaseDateOverlay(logger=self.logger)
+        self.release_dates = GoReleaseDateOverlay(logger=self.logger, timeout=self.download_timeout)
 
     def __enter__(self) -> Parser:
         self.fixdater.__enter__()
